@@ -17,15 +17,24 @@ class Token():
     session_ci: str
 
     def cookies(self):
-        return {
-            "SimpleSAMLAuthToken": self.auth_token,
-            "SimpleSAMLSessionID": self.session_id,
-            "session_ci": self.session_ci,
-        }
+        cookies = {}
+
+        if self.auth_token is not None:
+            cookies["SimpleSAMLAuthToken"] = self.auth_token
+
+        if self.session_id is not None:
+            cookies["SimpleSAMLSessionID"] = self.session_id
+
+        if self.session_ci is not None:
+            cookies["session_ci"] = self.session_ci
+
+        return cookies
 
 
 @dataclass
 class ClipDetails():
+    clip_id: str
+
     combined_media_id: str = None
     combined_playlist_url: str = None
     camera_media_id: str = None
@@ -33,8 +42,22 @@ class ClipDetails():
     slides_media_id: str = None
     slides_playlist_url: str = None
 
+    def media_ids(self):
+        return [id for id in [
+            self.combined_media_id,
+            self.camera_media_id,
+            self.slides_media_id,
+        ] if id is not None]
 
-def load_token(auth_url: str = "https://www.fau.tv/auth/sso"):
+    def playlist_urls(self):
+        return [url for url in [
+            self.combined_playlist_url,
+            self.camera_playlist_url,
+            self.slides_playlist_url,
+        ] if url is not None]
+
+
+def load_token(auth_url: str):
     global _token
 
     driver = webdriver.Firefox()
@@ -54,8 +77,6 @@ def load_token(auth_url: str = "https://www.fau.tv/auth/sso"):
         session_id=get_value(driver.get_cookie("SimpleSAMLSessionID")),
         session_ci=get_value(driver.get_cookie("session_ci")),
     )
-
-    print(_token)
 
     driver.close()
 
@@ -80,7 +101,7 @@ def get_clip_details(clip_id: str) -> ClipDetails:
     global _token
 
     url = f'https://www.fau.tv/clip/id/{clip_id}'
-    details = ClipDetails()
+    details = ClipDetails(clip_id=clip_id)
 
     with requests.get(url, cookies=_token.cookies()) as r:
         def get_details(keyword: str):
@@ -130,25 +151,19 @@ def download_playlist(playlist_url: str, outfile_path: str):
         '-i', playlist_url,
         '-c', 'copy',
         outfile_path,
-    ])
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
 
 def download_clip(clip_id: str, outfile_path: str):
     details = get_clip_details(clip_id)
 
-    media_id = next(id for id in [
-        details.combined_media_id,
-        details.camera_media_id,
-        details.slides_media_id,
-    ] if id is not None)
+    if len(details.media_ids()) > 0:
+        media_id = details.media_ids()[0]
+        print(f"Trying to download clip {clip_id} using media id {media_id}")
+        if download_media(media_id, outfile_path):
+            return
 
-    if download_media(media_id, outfile_path):
-        return
-
-    url = next(url for url in [
-        details.combined_playlist_url,
-        details.camera_playlist_url,
-        details.slides_playlist_url,
-    ] if url is not None)
-
-    download_playlist(url, outfile_path)
+    if len(details.playlist_urls()) > 0:
+        playlist_url = details.playlist_urls()[0]
+        print(f"Trying to download clip {clip_id} using playlist url {playlist_url}")
+        download_playlist(playlist_url, outfile_path)
